@@ -20,32 +20,32 @@ static int number_opens = 0;
 static struct class *charClass = NULL;
 static struct device *charDevice = NULL;
 
-const int MSG_SIZE_LIST = -1;
-const int MAX_MSG = -1;
+static int MSG_SIZE_LIST = -1;
+static int MAX_MSG = -1;
 
 module_param(MSG_SIZE_LIST, int, 0644);
 module_param(MAX_MSG, int, 0644);
 
 #define NAME_SIZE	32 
-#define MSG_SIZE_LIST	32
-#define MAX_MSG	150
+//#define MSG_SIZE_LIST	32
+//#define MAX_MSG	150
 
 struct process_list{
 	struct list_head link;
-	char message[MSG_SIZE_LIST];
-	//char * message; 
+	//char message[MSG_SIZE_LIST];
+	char * message; 
 	short size_list;
 };
 
 struct message_s { //change message_s to process
 	struct list_head link;
-	char name[NAME_SIZE];
-	//char * name;
+	//char name[NAME_SIZE];
+	char * name;
 	short size_name;
 	pid_t pid;
 	//struct process_list list_process;
 	struct list_head list_process;
-	char message[MSG_SIZE_LIST];
+	char message[1];
 	short size;
 };
 
@@ -64,11 +64,6 @@ int name_process(const char * buffer, char * name){
 
 
 bool register_process(const char * buffer, size_t len){ 
-	
-	if (len > NAME_SIZE){ 
-		printk(KERN_INFO "Simple Driver: too many characters to deal with (%d)\n", len);
-		return false;
-	}
 
 	struct message_s *new_node = kmalloc((sizeof(struct message_s)), GFP_KERNEL);
 
@@ -76,8 +71,14 @@ bool register_process(const char * buffer, size_t len){
 		printk(KERN_INFO "Memory allocation failed, this should never fail due to GFP_KERNEL flag\n");
 		return false;
 	}	
-
-	new_node->size_name = name_process(buffer, new_node->name);
+	new_node->name = kmalloc((sizeof(char) * strlen(kstrdup(buffer+4, GFP_KERNEL))), GFP_KERNEL);	
+	new_node->name = kstrdup(buffer+4, GFP_KERNEL);
+	if (strlen(new_node->name) > NAME_SIZE){ 
+		printk(KERN_INFO "Simple Driver: too many characters to deal with (%d)\n", len);
+		return false;
+	}
+	//new_node->size_name = name_process(buffer, new_node->name);
+	new_node->size_name = strlen(new_node->name);
 	printk("name_process : %s \n", new_node->name);
 	printk("size : %d \n", new_node->size_name);
 	new_node->pid = (int) task_pid_nr(current);
@@ -96,24 +97,28 @@ bool register_process(const char * buffer, size_t len){
 bool new_message(const char * buffer, size_t len){
 	struct message_s *entry;
 
-	//char * name_process = kmalloc((sizeof(char) * strlen(kstrndup(buffer, strchr(buffer, ' ') - buffer, GFP_KERNEL))), GFP_KERNEL);
-	char * name_process = kmalloc((sizeof(char) * NAME_SIZE), GFP_KERNEL);
+	char * name_process = kmalloc((sizeof(char) * strlen(kstrndup(buffer, strchr(buffer, ' ') - buffer, GFP_KERNEL))), GFP_KERNEL);
+
+	//printk("size disso: %d\n", strlen(kstrndup(buffer, strchr(buffer, ' ') - buffer, GFP_KERNEL)));
 
 	name_process = kstrndup(buffer, strchr(buffer, ' ') - buffer, GFP_KERNEL);
 
 	printk("name_process : %s \n", name_process);
 	printk("size : %d \n", strlen(name_process));
 
-	char * message = kmalloc((sizeof(char) * MSG_SIZE_LIST), GFP_KERNEL);
+	//printk("printa isso %d\n", (strlen(buffer) - strlen(name_process) - 1));
 
-	message = kstrndup(strchr(buffer, ' ') + 1, len, GFP_KERNEL);
+	//message = kstrndup(strchr(buffer, ' ') + 1, len, GFP_KERNEL);
+	char * message = kmalloc((sizeof(char) * (strlen(buffer) - strlen(name_process) - 1)), GFP_KERNEL);
+	message = kstrdup(buffer + strlen(name_process) + 1, GFP_KERNEL);
 
-	printk("message : %s \n", message);
-	printk("size : %d \n", strlen(message));
+	if (strlen(message) > MSG_SIZE_LIST){ 
+		printk(KERN_INFO "Simple Driver: too many characters to deal with (%d)\n", len);
+		return false;
+	}
 
-	//printk("buffer : %s \n", buffer);
-	//printk("string : %s \n", name_process);
-	//printk("mensagem : %s \n", message);
+	printk("message : %s\n", message);
+	printk("size : %d\n", strlen(message));
 
 	bool name_found = false;
 
@@ -273,7 +278,10 @@ static int simple_init(void)
 	printk(KERN_INFO "Simple Driver: device class created.\n");
 	
 	INIT_LIST_HEAD(&list);
-		
+
+	printk(KERN_INFO "MSG_SIZE_LIST = %d\n", MSG_SIZE_LIST);
+	printk(KERN_INFO "MAX_MSG = %d\n", MAX_MSG);
+
 	return 0;
 }
 
