@@ -34,13 +34,13 @@ int main(){
 				printf("Reading from the device...\n");
 	
 				ret = read(fd, receive, BUFFER_LENGTH);			// Read the response from the kernel module
-				if (ret < 0) {
-					perror("Failed to read the message from the device.");
-					return errno;
+				if (!ret) {
+					printf("Failed to read the message from the device.");
 				}
-
-				printf("The received message is: [%s]\n", receive);
-				printf("End of the program\n");
+				else{
+					printf("The received message is: [%s]\n", receive);
+					printf("End of the program\n");
+				}
 		}
 		else {
 			printf("Registering ... [%s].\n", stringToSend);
@@ -50,13 +50,7 @@ int main(){
 			if (ret) {
 				printf("Registered\n");
 			} else {
-				perror("Failed to write the message to the device.");
-				return errno;
-			}
-
-			if (ret < 0) {
-				perror("Failed to write the message to the device.");
-				return errno;
+				printf("Process not registered\n");
 			}
 		}
 	}

@@ -27,14 +27,12 @@ module_param(MSG_SIZE_LIST, int, 0644);
 module_param(MAX_MSG, int, 0644);
 
 #define NAME_SIZE	32 
-//#define MSG_SIZE_LIST	32
-//#define MAX_MSG	150
 
 struct process_list{
 	struct list_head link;
 	//char message[MSG_SIZE_LIST];
 	char * message; 
-	short size_list;
+	short size_message;
 };
 
 struct message_s { //change message_s to process
@@ -43,6 +41,7 @@ struct message_s { //change message_s to process
 	char * name;
 	short size_name;
 	pid_t pid;
+	short size_list;
 	//struct process_list list_process;
 	struct list_head list_process;
 	char message[1];
@@ -51,21 +50,15 @@ struct message_s { //change message_s to process
 
 struct list_head list;
 
-int name_process(const char * buffer, char * name){ 
-	int i = 4,j = 0;
-	while(buffer[i] != '\0'){
-		name[j] = buffer[i];
-		i++;
-		j++;
-	}
-	name[j] = '\0';
-	return j;
-}
-
 
 bool register_process(const char * buffer, size_t len){ 
 
-	struct message_s *new_node = kmalloc((sizeof(struct message_s)), GFP_KERNEL);
+	if (strlen(kstrdup(buffer+4, GFP_KERNEL)) > NAME_SIZE){ 
+		printk(KERN_INFO "Simple Driver: too many characters to deal with (%d)\n", len);
+		return false;
+	}
+
+	struct message_s * new_node = kmalloc((sizeof(struct message_s)), GFP_KERNEL);
 
 	if (!new_node) {
 		printk(KERN_INFO "Memory allocation failed, this should never fail due to GFP_KERNEL flag\n");
@@ -73,14 +66,10 @@ bool register_process(const char * buffer, size_t len){
 	}	
 	new_node->name = kmalloc((sizeof(char) * strlen(kstrdup(buffer+4, GFP_KERNEL))), GFP_KERNEL);	
 	new_node->name = kstrdup(buffer+4, GFP_KERNEL);
-	if (strlen(new_node->name) > NAME_SIZE){ 
-		printk(KERN_INFO "Simple Driver: too many characters to deal with (%d)\n", len);
-		return false;
-	}
-	//new_node->size_name = name_process(buffer, new_node->name);
 	new_node->size_name = strlen(new_node->name);
 	printk("name_process : %s \n", new_node->name);
 	printk("size : %d \n", new_node->size_name);
+	new_node->size_list = 0;
 	new_node->pid = (int) task_pid_nr(current);
 	INIT_LIST_HEAD(&new_node->list_process);
 	list_add_tail(&(new_node->link), &list);
@@ -94,8 +83,28 @@ bool register_process(const char * buffer, size_t len){
 	return true;
 }
 
+bool unregister_process(void){ 
+	struct message_s *entry; 
+
+	if (list_empty(&list)) {
+		printk(KERN_INFO "Empty list.\n");
+		return false;
+	}
+
+	list_for_each_entry(entry, &list, link) {
+		if (entry->pid == (int) task_pid_nr(current)){
+			list_del(&entry->link);
+			kfree(entry);
+			return true;
+		}
+	}
+
+	printk(KERN_INFO "The process pid isn't registered in mq\n");
+	return false;
+}
+
 bool new_message(const char * buffer, size_t len){
-	struct message_s *entry;
+	struct message_s *entry; 
 
 	char * name_process = kmalloc((sizeof(char) * strlen(kstrndup(buffer, strchr(buffer, ' ') - buffer, GFP_KERNEL))), GFP_KERNEL);
 
@@ -108,11 +117,11 @@ bool new_message(const char * buffer, size_t len){
 
 	//printk("printa isso %d\n", (strlen(buffer) - strlen(name_process) - 1));
 
-	//message = kstrndup(strchr(buffer, ' ') + 1, len, GFP_KERNEL);
+	//message = kstrndup(strchr(buffer, ' ') + 1, len, GFP_KERNEL); 
 	char * message = kmalloc((sizeof(char) * (strlen(buffer) - strlen(name_process) - 1)), GFP_KERNEL);
 	message = kstrdup(buffer + strlen(name_process) + 1, GFP_KERNEL);
 
-	if (strlen(message) > MSG_SIZE_LIST){ 
+	if (strlen(message) > MAX_MSG){ 
 		printk(KERN_INFO "Simple Driver: too many characters to deal with (%d)\n", len);
 		return false;
 	}
@@ -125,24 +134,32 @@ bool new_message(const char * buffer, size_t len){
 	list_for_each_entry(entry, &list, link) {
 		if(!strcmp(entry->name, name_process)){
 		//if (entry->pid == (int) task_pid_nr(current)){
-			strcpy(entry->message, buffer);
-			entry->size = strlen(buffer);
-			if(list_empty(&entry->list_process)){
+			if(entry->size_list < MSG_SIZE_LIST){
 				struct process_list *new_node = kmalloc((sizeof(struct process_list)), GFP_KERNEL);
-				printk("addr of new_node: %p\n", new_node);
+				new_node->message = kmalloc((sizeof(char) * strlen(message)), GFP_KERNEL);
 				strcpy(new_node->message, message);
-				new_node->size_list = strlen(message);
+				new_node->size_message = strlen(message);
+				entry->size_list += 1;
 				list_add_tail(&(new_node->link), &entry->list_process);
 				name_found = true;
 			}
+			else{
+				printk(KERN_INFO "The process list is full \n", len);
+				return false;
+			}
 		}
+	}
+
+	if (!name_found){
+		printk(KERN_INFO "The process name isn't registered in mq\n", len);
+		return false;
 	}
 
 	struct process_list *entry_process;
 
 	list_for_each_entry(entry, &list, link) {
 		list_for_each_entry(entry_process, &entry->list_process, link) {
-			printk("penes2 %d: %s\n", entry->pid, entry_process->message);
+			printk("list process %d: %s\n", entry->pid, entry_process->message);
 		}
 	}
 
@@ -332,15 +349,15 @@ static ssize_t dev_read(struct file *filep, char *buffer, size_t len, loff_t *of
 	}	
 	
 	// copy_to_user has the format ( * to, *from, size) and returns 0 on success
-	error = copy_to_user(buffer, entry_process->message, entry_process->size_list);
+	error = copy_to_user(buffer, entry_process->message, entry_process->size_message);
 
 	if (!error) {				// if true then have success
-		printk(KERN_INFO "Simple Driver: sent %d characters to the user\n", entry_process->size_list);
+		printk(KERN_INFO "Simple Driver: sent %d characters to the user\n", entry_process->size_message);
 		//list_delete_head(); adaptar
 		list_del(&entry_process->link);
 		kfree(entry_process);
 
-		return 0;
+		return 1;
 	} else {
 		printk(KERN_INFO "Simple Driver: failed to send %d characters to the user\n", error);
 		
@@ -355,28 +372,13 @@ static ssize_t dev_write(struct file *filep, const char *buffer, size_t len, lof
 		if (register_val) return true;
 		else return false;
 	}
-	else if (len < MSG_SIZE_LIST) {
-		new_message(buffer, len);
+	else if (!strcmp(kstrndup(buffer,6, GFP_KERNEL), "unreg ")){
+		return unregister_process();
 		
-		/*list_add_entry(buffer);
-		list_show();
-
-		printk(KERN_INFO "Simple Driver: received %zu characters from the user\n", len);
-		
-		printk("The process id is %d\n", (int) task_pid_nr(current));*/
-
-		return len;
 	} else {
-		printk(KERN_INFO "Simple Driver: too many characters to deal with (%d)\n", len);
-		
-		return 0;
+		return new_message(buffer, len);
 	}
 
-	/*printk(KERN_INFO "Simple Driver: received %zu characters from the user\n", len);
-
-	printk("buffer : %s\n", buffer[3]);
-
-	return 0;*/
 }
 
 static int dev_release(struct inode *inodep, struct file *filep)
